@@ -101,13 +101,26 @@ def annulla_guida_allievo(call):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        
+        # Recuperiamo i dati della guida
         cur.execute("SELECT data, ora, scatti FROM guide WHERE id = %s", (id_guida,))
         guida = cur.fetchone()
         
         if guida:
             data_g, ora_g, scatti = guida
+            
+            # Recuperiamo il nome dell'allievo
+            cur.execute("SELECT nome FROM allievi WHERE id = %s", (id_allievo,))
+            nome_allievo = cur.fetchone()[0]
+
+            # Cancelliamo la guida e rimborsiamo
             cur.execute("DELETE FROM guide WHERE id = %s", (id_guida,))
             cur.execute("UPDATE allievi SET crediti = crediti + %s WHERE id = %s", (scatti, id_allievo))
+            
+            # 🚨 MAGIA DEL POPUP: Scriviamo il messaggio per la segreteria! 🚨
+            messaggio = f"🚨 ANNULLAMENTO: L'allievo {nome_allievo} ha annullato la guida del {data_g} alle {ora_g}!"
+            cur.execute("INSERT INTO notifiche (messaggio) VALUES (%s)", (messaggio,))
+            
             conn.commit()
             bot.edit_message_text(f"✅ **Guida Annullata!**\nLa tua guida del {data_g} alle {ora_g} è stata cancellata.\nTi sono state rimborsate {scatti} guide.", 
                                   chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
@@ -246,3 +259,4 @@ def run_web(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 if __name__ == "__main__":
     threading.Thread(target=run_web).start()
     bot.infinity_polling()
+
