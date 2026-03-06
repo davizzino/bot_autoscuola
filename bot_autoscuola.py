@@ -98,6 +98,10 @@ def mostra_guide_allievo(call):
 def annulla_guida_allievo(call):
     dati = call.data.split('|')
     id_allievo, id_guida = dati[1], dati[2]
+    
+    # 🚨 INSERISCI QUI IL TUO ID PERSONALE TELEGRAM (Solo numeri, niente lettere, ma tienilo tra le virgolette!) 🚨
+    MIO_ID_TELEGRAM = "INCOLLA_QUI_IL_TUO_ID" 
+
     try:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -117,11 +121,19 @@ def annulla_guida_allievo(call):
             cur.execute("DELETE FROM guide WHERE id = %s", (id_guida,))
             cur.execute("UPDATE allievi SET crediti = crediti + %s WHERE id = %s", (scatti, id_allievo))
             
-            # 🚨 MAGIA DEL POPUP: Scriviamo il messaggio per la segreteria! 🚨
-            messaggio = f"🚨 ANNULLAMENTO: L'allievo {nome_allievo} ha annullato la guida del {data_g} alle {ora_g}!"
-            cur.execute("INSERT INTO notifiche (messaggio) VALUES (%s)", (messaggio,))
+            # 🚨 MAGIA 1 (IL POPUP): Scriviamo il messaggio nel Database per il PC
+            messaggio_admin = f"🚨 ANNULLAMENTO: L'allievo {nome_allievo} ha annullato la guida del {data_g} alle {ora_g}!"
+            cur.execute("INSERT INTO notifiche (messaggio) VALUES (%s)", (messaggio_admin,))
             
             conn.commit()
+            
+            # 🚨 MAGIA 2 (SUL TUO CELLULARE): Il bot manda il messaggio direttamente a TE!
+            try:
+                bot.send_message(MIO_ID_TELEGRAM, messaggio_admin)
+            except Exception as e:
+                print("Errore notifica admin:", e)
+
+            # Conferma finale all'allievo
             bot.edit_message_text(f"✅ **Guida Annullata!**\nLa tua guida del {data_g} alle {ora_g} è stata cancellata.\nTi sono state rimborsate {scatti} guide.", 
                                   chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
         cur.close()
@@ -259,4 +271,5 @@ def run_web(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 if __name__ == "__main__":
     threading.Thread(target=run_web).start()
     bot.infinity_polling()
+
 
