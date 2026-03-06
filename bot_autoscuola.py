@@ -254,6 +254,20 @@ def conferma_prenotazione(call):
             cur.execute("INSERT INTO guide (allievo, istruttore, veicolo, data, ora, ora_fine, stato_pagamento, scatti) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", (allievo[0], nome_istr, "Non assegnato", data_scelta, ora_inizio, ora_fine, f"Scalato ({scatti})", scatti))
             cur.execute("UPDATE allievi SET crediti = crediti - %s WHERE id=%s", (scatti, id_allievo))
             conn.commit()
+            # 🚨 INIZIO MAGIA NOTIFICHE PRENOTAZIONE 🚨
+            messaggio_admin = f"✅ NUOVA PRENOTAZIONE: L'allievo {allievo[0]} ha prenotato per il {data_scelta} alle {ora_inizio} con {nome_istr}!"
+            
+            # 1. Scriviamo il bigliettino nel DB per il PC
+            cur.execute("INSERT INTO notifiche (messaggio) VALUES (%s)", (messaggio_admin,))
+            conn.commit() # Salviamo anche il bigliettino!
+            
+            # 2. Notifica immediata sul TUO cellulare
+            MIO_ID_TELEGRAM = "INCOLLA_QUI_IL_TUO_ID" # <-- RIMETTI IL TUO NUMERO ID QUI!
+            try:
+                bot.send_message(MIO_ID_TELEGRAM, messaggio_admin)
+            except Exception as e:
+                print("Errore notifica admin:", e)
+            # 🚨 FINE MAGIA NOTIFICHE 🚨
             bot.edit_message_text(f"✅ *CONFERMATA!*\n🗓 {data_scelta} alle {ora_inizio} con {nome_istr}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
         else:
             bot.edit_message_text("❌ Crediti insufficienti.", chat_id=call.message.chat.id, message_id=call.message.message_id)
@@ -271,6 +285,7 @@ def run_web(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 if __name__ == "__main__":
     threading.Thread(target=run_web).start()
     bot.infinity_polling()
+
 
 
 
