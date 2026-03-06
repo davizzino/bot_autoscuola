@@ -262,7 +262,7 @@ def conferma_prenotazione(call):
             conn.commit() # Salviamo anche il bigliettino!
             
             # 2. Notifica immediata sul TUO cellulare
-            MIO_ID_TELEGRAM = "INCOLLA_QUI_IL_TUO_ID" # <-- RIMETTI IL TUO NUMERO ID QUI!
+            MIO_ID_TELEGRAM = "2107082705" # <-- RIMETTI IL TUO NUMERO ID QUI!
             try:
                 bot.send_message(MIO_ID_TELEGRAM, messaggio_admin)
             except Exception as e:
@@ -285,6 +285,7 @@ def run_web(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 if __name__ == "__main__":
     threading.Thread(target=run_web).start()
     bot.infinity_polling()
+
 
 
 
