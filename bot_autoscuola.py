@@ -100,7 +100,7 @@ def annulla_guida_allievo(call):
     id_allievo, id_guida = dati[1], dati[2]
     
     # 🚨 INSERISCI QUI IL TUO ID PERSONALE TELEGRAM (Solo numeri, niente lettere, ma tienilo tra le virgolette!) 🚨
-    MIO_ID_TELEGRAM = "INCOLLA_QUI_IL_TUO_ID" 
+    MIO_ID_TELEGRAM = "2107082705" 
 
     try:
         conn = get_db_connection()
@@ -271,5 +271,6 @@ def run_web(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 if __name__ == "__main__":
     threading.Thread(target=run_web).start()
     bot.infinity_polling()
+
 
 
