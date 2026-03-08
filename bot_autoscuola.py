@@ -142,15 +142,43 @@ def esegui_annullamento(call):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT data, ora, scatti FROM guide WHERE id = %s", (id_guida,))
+        
+        # 1. Recuperiamo il nome dell'allievo per scriverlo nella notifica
+        cur.execute("SELECT nome FROM allievi WHERE id = %s", (id_allievo,))
+        nome_allievo = cur.fetchone()[0]
+        
+        # 2. Recuperiamo i dettagli della guida (incluso l'istruttore)
+        cur.execute("SELECT data, ora, scatti, istruttore FROM guide WHERE id = %s", (id_guida,))
         guida = cur.fetchone()
         
         if guida:
+            data_g, ora_g, scatti, istr = guida
+            
+            # 3. Eliminiamo e rimborsiamo
             cur.execute("DELETE FROM guide WHERE id = %s", (id_guida,))
-            cur.execute("UPDATE allievi SET crediti = crediti + %s WHERE id = %s", (guida[2], id_allievo))
+            cur.execute("UPDATE allievi SET crediti = crediti + %s WHERE id = %s", (scatti, id_allievo))
             conn.commit()
-            bot.edit_message_text(f"✅ Guida del {guida[0]} alle {guida[1]} **Annullata**.\nI crediti sono stati rimborsati.", 
-                                  chat_id=call.message.chat.id, message_id=call.message.message_id)
+            
+            # 4. Conferma all'allievo
+            bot.edit_message_text(f"✅ Guida del {data_g} alle {ora_g} **Annullata**.\nI crediti sono stati rimborsati.", 
+                                  chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            
+            # ==========================================
+            # 5. NOTIFICA IMMEDIATA ALLA SEGRETERIA (PC)
+            # ==========================================
+            try:
+                testo_admin = (
+                    f"🔴 **GUIDA ANNULLATA (Da Telegram)**\n"
+                    f"👤 Allievo: {nome_allievo}\n"
+                    f"📅 Data: {data_g}\n"
+                    f"⏰ Orario: {ora_g}\n"
+                    f"👨‍🏫 Istr: {istr}"
+                )
+                # Invia il messaggio al tuo ID Telegram
+                bot.send_message(ADMIN_ID, testo_admin, parse_mode="Markdown")
+            except Exception as e:
+                print(f"Errore notifica admin annullamento: {e}")
+                
         cur.close()
         conn.close()
     except Exception as e:
@@ -289,6 +317,7 @@ def home(): return "✅ Bot Online"
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))).start()
     bot.infinity_polling()
+
 
 
 
