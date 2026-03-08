@@ -7,10 +7,12 @@ from flask import Flask
 import os
 
 # ==========================================
-# 🚨 INSERISCI QUI LE TUE 3 CHIAVI SEGRETE 🚨
+# 🚨 CONFIGURAZIONE 🚨
 TELEGRAM_TOKEN = "8700195342:AAGlUqka3ImYc9G5DYnCRfixisLWuguDxjk"
 STRIPE_PROVIDER_TOKEN = "2051251535:TEST:OTk5MDA4ODgxLTAwNQ"
 DB_URL = "postgresql://postgres.xxbjfhpbrcbryfcjuxsx:Napoli2026+++@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
+# Inserisci il tuo ID numerico per ricevere le notifiche sul PC
+ADMIN_ID = "IL_TUO_ID_TELEGRAM" 
 # ==========================================
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -27,7 +29,7 @@ def send_welcome(message):
     )
     bot.reply_to(message, testo, parse_mode="Markdown")
 
-# --- 1. CERCA L'ALLIEVO E SALVA IL CHAT_ID ---
+# --- 1. PROFILO ALLIEVO (MENU PRINCIPALE) ---
 @bot.message_handler(func=lambda message: True)
 def check_student(message):
     nome_inserito = message.text.strip()
@@ -41,249 +43,229 @@ def check_student(message):
             id_a, nome_reale, crediti, pacchetto = allievo
             pacchetto = pacchetto if pacchetto else "Nessuno"
             
-            # MAGIA: Salva il numero di telefono virtuale (chat_id) di questo allievo!
-            cur.execute("UPDATE allievi SET chat_id = %s WHERE id = %s", (message.chat.id, id_a))
+            # Aggiorna il chat_id dell'allievo per abilitare le notifiche
+            cur.execute("UPDATE allievi SET chat_id = %s WHERE id = %s", (str(message.chat.id), id_a))
             conn.commit()
             
-            risposta = f"👤 *Profilo: {nome_reale}*\n📦 {pacchetto}\n⏳ *Guide Rimaste: {crediti}*"
+            risposta = f"👤 *Profilo: {nome_reale}*\n📦 {pacchetto}\n⌛ *Guide Rimaste: {crediti}*"
             
             markup = InlineKeyboardMarkup()
             if crediti > 0:
                 markup.add(InlineKeyboardButton("🗓️ Inizia Prenotazione", callback_data=f"istr|{id_a}"))
             
-            markup.add(InlineKeyboardButton("❌ Le mie Guide (Annulla)", callback_data=f"mieguide|{id_a}"))
+            # Pulsanti con callback separati per evitare che si premano insieme
+            markup.add(InlineKeyboardButton("📋 Le mie Guide (Storico)", callback_data=f"storico|{id_a}"))
+            markup.add(InlineKeyboardButton("❌ Le mie Guide (Annulla)", callback_data=f"annulla_lista|{id_a}"))
             markup.add(InlineKeyboardButton("🛒 Acquista Pacchetto", callback_data=f"shop|{id_a}"))
-                
+            
             bot.reply_to(message, risposta, parse_mode="Markdown", reply_markup=markup)
         else:
             bot.reply_to(message, "❌ Non ho trovato questo nome. Riprova!")
         cur.close()
         conn.close()
     except Exception as e:
-        bot.reply_to(message, "⚠️ Errore di rete.")
-        print(e)
+        print(f"Errore check_student: {e}")
 
-# ==========================================
-# SEZIONE DISDETTE (NOVITÀ!)
-# ==========================================
-@bot.callback_query_handler(func=lambda call: call.data.startswith('mieguide|'))
-def mostra_guide_allievo(call):
+# --- 2. GESTIONE STORICO ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('storico|'))
+def mostra_storico(call):
     id_allievo = call.data.split('|')[1]
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT nome FROM allievi WHERE id = %s", (id_allievo,))
-        nome_allievo = cur.fetchone()[0]
+        nome_all = cur.fetchone()[0]
         
-        cur.execute("SELECT id, data, ora, istruttore FROM guide WHERE allievo = %s ORDER BY id DESC LIMIT 5", (nome_allievo,))
+        # Recupera le ultime 10 guide incluse quelle annullate
+        cur.execute("""
+            SELECT data, ora, ora_fine, istruttore, stato_pagamento 
+            FROM guide WHERE allievo = %s 
+            ORDER BY id DESC LIMIT 10
+        """, (nome_all,))
         guide = cur.fetchall()
+        
+        testo = "📋 *STORICO ULTIME 10 GUIDE*\n\n"
+        if not guide:
+            testo += "Nessuna guida trovata."
+        else:
+            for g in guide:
+                icona = "✅" if "Scalato" in g[4] else "❌"
+                testo += f"{icona} {g[0]} | {g[1]}-{g[2]}\n👤 {g[3]}\n\n"
+        
+        bot.send_message(call.message.chat.id, testo, parse_mode="Markdown")
+        bot.answer_callback_query(call.id)
         cur.close()
         conn.close()
-        
-        markup = InlineKeyboardMarkup()
-        if not guide:
-            bot.edit_message_text("Non hai guide prenotate da annullare.", chat_id=call.message.chat.id, message_id=call.message.message_id)
-            return
-        
-        for g in guide:
-            id_guida, data, ora, istr = g
-            markup.add(InlineKeyboardButton(f"❌ {data} - {ora} ({istr})", callback_data=f"delguida|{id_allievo}|{id_guida}"))
-        
-        bot.edit_message_text("Scegli la guida che vuoi **ANNULLARE**:\n*(I crediti ti verranno rimborsati istantaneamente)*", 
-                              chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="Markdown")
     except Exception as e:
-        print(e)
+        print(f"Errore storico: {e}")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('delguida|'))
-def annulla_guida_allievo(call):
-    dati = call.data.split('|')
-    id_allievo, id_guida = dati[1], dati[2]
-    
-    # 🚨 INSERISCI QUI IL TUO ID PERSONALE TELEGRAM (Solo numeri, niente lettere, ma tienilo tra le virgolette!) 🚨
-    MIO_ID_TELEGRAM = "2107082705" 
-
+# --- 3. GESTIONE ANNULLAMENTO ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('annulla_lista|'))
+def lista_per_annullare(call):
+    id_allievo = call.data.split('|')[1]
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        cur.execute("SELECT nome FROM allievi WHERE id = %s", (id_allievo,))
+        nome_all = cur.fetchone()[0]
         
-        # Recuperiamo i dati della guida
+        # Mostra solo guide che hanno lo stato 'Scalato' per poterle annullare
+        cur.execute("""
+            SELECT id, data, ora, istruttore 
+            FROM guide WHERE allievo = %s AND stato_pagamento LIKE '%%Scalato%%' 
+            ORDER BY id DESC LIMIT 5
+        """, (nome_all,))
+        guide = cur.fetchall()
+        
+        markup = InlineKeyboardMarkup()
+        if not guide:
+            bot.edit_message_text("Non hai guide attive da annullare.", 
+                                  chat_id=call.message.chat.id, message_id=call.message.message_id)
+            return
+
+        for g in guide:
+            markup.add(InlineKeyboardButton(f"❌ Annulla {g[1]} {g[2]}", callback_data=f"delguida|{id_allievo}|{g[0]}"))
+        
+        bot.edit_message_text("Quale guida vuoi **CANCELLARE**?", 
+                              chat_id=call.message.chat.id, message_id=call.message.message_id, 
+                              reply_markup=markup, parse_mode="Markdown")
+        bot.answer_callback_query(call.id)
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Errore lista annulla: {e}")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('delguida|'))
+def esegui_annullamento(call):
+    dati = call.data.split('|')
+    id_allievo, id_guida = dati[1], dati[2]
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
         cur.execute("SELECT data, ora, scatti FROM guide WHERE id = %s", (id_guida,))
         guida = cur.fetchone()
         
         if guida:
-            data_g, ora_g, scatti = guida
-            
-            # Recuperiamo il nome dell'allievo
-            cur.execute("SELECT nome FROM allievi WHERE id = %s", (id_allievo,))
-            nome_allievo = cur.fetchone()[0]
-
-            # Cancelliamo la guida e rimborsiamo
             cur.execute("DELETE FROM guide WHERE id = %s", (id_guida,))
-            cur.execute("UPDATE allievi SET crediti = crediti + %s WHERE id = %s", (scatti, id_allievo))
-            
-            # 🚨 MAGIA 1 (IL POPUP): Scriviamo il messaggio nel Database per il PC
-            messaggio_admin = f"🚨 ANNULLAMENTO: L'allievo {nome_allievo} ha annullato la guida del {data_g} alle {ora_g}!"
-            cur.execute("INSERT INTO notifiche (messaggio) VALUES (%s)", (messaggio_admin,))
-            
+            cur.execute("UPDATE allievi SET crediti = crediti + %s WHERE id = %s", (guida[2], id_allievo))
             conn.commit()
-            
-            # 🚨 MAGIA 2 (SUL TUO CELLULARE): Il bot manda il messaggio direttamente a TE!
-            try:
-                bot.send_message(MIO_ID_TELEGRAM, messaggio_admin)
-            except Exception as e:
-                print("Errore notifica admin:", e)
-
-            # Conferma finale all'allievo
-            bot.edit_message_text(f"✅ **Guida Annullata!**\nLa tua guida del {data_g} alle {ora_g} è stata cancellata.\nTi sono state rimborsate {scatti} guide.", 
-                                  chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            bot.edit_message_text(f"✅ Guida del {guida[0]} alle {guida[1]} **Annullata**.\nI crediti sono stati rimborsati.", 
+                                  chat_id=call.message.chat.id, message_id=call.message.message_id)
         cur.close()
         conn.close()
     except Exception as e:
-        print(e)
+        print(f"Errore cancellazione: {e}")
 
-# ==========================================
-# SEZIONE NEGOZIO ONLINE (PAGAMENTI)
-# ==========================================
-@bot.callback_query_handler(func=lambda call: call.data.startswith('shop|'))
-def apri_negozio(call):
-    id_allievo = call.data.split('|')[1]
-    markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("📦 Pacchetto 3 Ore (9 Guide) - 63€", callback_data=f"buy|{id_allievo}|9|63"))
-    markup.add(InlineKeyboardButton("📦 Pacchetto 6 Ore (18 Guide) - 126€", callback_data=f"buy|{id_allievo}|18|126"))
-    bot.edit_message_text("🛒 **Negozio Autoscuola**\nScegli il pacchetto da ricaricare:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('buy|'))
-def genera_fattura(call):
-    dati = call.data.split('|')
-    id_allievo, quantita_guide, prezzo_euro = dati[1], int(dati[2]), int(dati[3])
-    titolo = f"Pacchetto {quantita_guide} Guide"
-    descrizione = f"Ricarica automatica di {quantita_guide} guide."
-    prezzi = [LabeledPrice(label=titolo, amount=prezzo_euro * 100)]
-    bot.send_invoice(chat_id=call.message.chat.id, title=titolo, description=descrizione, invoice_payload=f"PAGAMENTO|{id_allievo}|{quantita_guide}", provider_token=STRIPE_PROVIDER_TOKEN, currency="EUR", prices=prezzi, start_parameter="ricarica")
-
-@bot.pre_checkout_query_handler(func=lambda query: True)
-def checkout_sicurezza(pre_checkout_query):
-    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-@bot.message_handler(content_types=['successful_payment'])
-def pagamento_successo(message):
-    dati = message.successful_payment.invoice_payload.split('|')
-    id_allievo, guide_acquistate = dati[1], int(dati[2])
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE allievi SET crediti = crediti + %s, pacchetto_attivo = %s WHERE id = %s", (guide_acquistate, f"Pacchetto ({guide_acquistate} Guide)", id_allievo))
-        conn.commit()
-        bot.reply_to(message, f"🎉 *PAGAMENTO RICEVUTO!*\n{guide_acquistate} guide accreditate istantaneamente!", parse_mode="Markdown")
-        cur.close()
-        conn.close()
-    except Exception as e:
-        print(e)
-
-# ==========================================
-# SEZIONE PRENOTAZIONI GUIDA
-# ==========================================
+# --- 4. PRENOTAZIONI ---
 @bot.callback_query_handler(func=lambda call: call.data.startswith('istr|'))
 def scegli_istruttore(call):
     id_allievo = call.data.split('|')[1]
     markup = InlineKeyboardMarkup()
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT nome FROM istruttori ORDER BY nome")
-        istruttori = cur.fetchall()
-        cur.close()
-        conn.close()
-        for istr in istruttori: markup.add(InlineKeyboardButton(f"👨‍🏫 {istr[0]}", callback_data=f"data|{id_allievo}|{istr[0]}"))
-        markup.add(InlineKeyboardButton("🔄 Nessuna preferenza", callback_data=f"data|{id_allievo}|Da Assegnare"))
-        bot.edit_message_text("Con quale istruttore vuoi fare la guida?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-    except Exception as e: print(e)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT nome FROM istruttori ORDER BY nome")
+    for istr in cur.fetchall():
+        markup.add(InlineKeyboardButton(f"👨‍🏫 {istr[0]}", callback_data=f"data|{id_allievo}|{istr[0]}"))
+    bot.edit_message_text("Scegli l'istruttore:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    cur.close()
+    conn.close()
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('data|'))
 def scegli_giorno(call):
     dati = call.data.split('|')
-    id_allievo, nome_istruttore = dati[1], dati[2]
     markup = InlineKeyboardMarkup()
-    giorni_it = {0: "Lunedì", 1: "Martedì", 2: "Mercoledì", 3: "Giovedì", 4: "Venerdì", 5: "Sabato"}
     oggi = datetime.now()
-    giorni_aggiunti, i = 0, 1
-    while giorni_aggiunti < 10:
-        gc = oggi + timedelta(days=i)
-        if gc.weekday() != 6:
-            testo = f"Domani ({gc.strftime('%d/%m')})" if i == 1 else f"📅 {giorni_it[gc.weekday()]} {gc.strftime('%d/%m')}"
-            markup.add(InlineKeyboardButton(testo, callback_data=f"ora|{id_allievo}|{nome_istruttore}|{gc.strftime('%d/%m/%Y')}"))
-            giorni_aggiunti += 1
-        i += 1
-    bot.edit_message_text(f"🗓️ Scegli il GIORNO:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    for i in range(1, 8):
+        g = oggi + timedelta(days=i)
+        if g.weekday() != 6:
+            markup.add(InlineKeyboardButton(g.strftime('%d/%m (%a)'), callback_data=f"ora|{dati[1]}|{dati[2]}|{g.strftime('%d/%m/%Y')}"))
+    bot.edit_message_text("Scegli il giorno:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ora|'))
 def scegli_orario(call):
     dati = call.data.split('|')
     markup = InlineKeyboardMarkup()
-    row = []
-    for h in range(8, 21):
-        row.append(InlineKeyboardButton(f"🕒 {h:02d}:00", callback_data=f"dur|{dati[1]}|{dati[2]}|{dati[3]}|{h:02d}:00"))
-        if len(row) == 3:
-            markup.row(*row)
-            row = []
-    if row: markup.row(*row)
-    bot.edit_message_text("🕒 A che ora?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    for h in range(8, 20):
+        markup.add(InlineKeyboardButton(f"{h}:00", callback_data=f"dur|{dati[1]}|{dati[2]}|{dati[3]}|{h:02d}:00"))
+    bot.edit_message_text("A che ora?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('dur|'))
 def scegli_durata(call):
     dati = call.data.split('|')
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("⏱️ 20 min (1 Guida)", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|1"))
-    markup.add(InlineKeyboardButton("⏱️ 40 min (2 Guide)", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|2"))
-    markup.add(InlineKeyboardButton("⏱️ 1 Ora (3 Guide)", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|3"))
-    bot.edit_message_text("⏳ Quanto vuoi guidare?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    markup.add(InlineKeyboardButton("⏱️ 20 min", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|1"))
+    markup.add(InlineKeyboardButton("⏱️ 40 min", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|2"))
+    markup.add(InlineKeyboardButton("⏱️ 1 Ora", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|3"))
+    bot.edit_message_text("Durata della guida?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('conf|'))
 def conferma_prenotazione(call):
     dati = call.data.split('|')
-    id_allievo, nome_istr, data_scelta, ora_inizio, scatti = dati[1], dati[2], dati[3], dati[4], int(dati[5])
-    h, m = map(int, ora_inizio.split(':'))
+    id_a, istr, data, ora, scatti = dati[1], dati[2], dati[3], dati[4], int(dati[5])
+    
+    # Calcolo orario di fine
+    h, m = map(int, ora.split(':'))
     minuti = m + (scatti * 20)
     ora_fine = f"{(h + minuti // 60):02d}:{(minuti % 60):02d}"
+    
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT nome, crediti FROM allievi WHERE id=%s", (id_allievo,))
+        cur.execute("SELECT nome, crediti FROM allievi WHERE id=%s", (id_a,))
         allievo = cur.fetchone()
+        
         if allievo and allievo[1] >= scatti:
-            cur.execute("INSERT INTO guide (allievo, istruttore, veicolo, data, ora, ora_fine, stato_pagamento, scatti) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)", (allievo[0], nome_istr, "Non assegnato", data_scelta, ora_inizio, ora_fine, f"Scalato ({scatti})", scatti))
-            cur.execute("UPDATE allievi SET crediti = crediti - %s WHERE id=%s", (scatti, id_allievo))
+            # Registrazione della guida
+            cur.execute("""
+                INSERT INTO guide (allievo, istruttore, veicolo, data, ora, ora_fine, stato_pagamento, scatti) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (allievo[0], istr, "Da Assegnare", data, ora, ora_fine, f"Scalato ({scatti})", scatti))
+            
+            # Scalaggio crediti
+            cur.execute("UPDATE allievi SET crediti = crediti - %s WHERE id=%s", (scatti, id_a))
             conn.commit()
-            # 🚨 INIZIO MAGIA NOTIFICHE PRENOTAZIONE 🚨
-            messaggio_admin = f"✅ NUOVA PRENOTAZIONE: L'allievo {allievo[0]} ha prenotato per il {data_scelta} alle {ora_inizio} con {nome_istr}!"
             
-            # 1. Scriviamo il bigliettino nel DB per il PC
-            cur.execute("INSERT INTO notifiche (messaggio) VALUES (%s)", (messaggio_admin,))
-            conn.commit() # Salviamo anche il bigliettino!
-            
-            # 2. Notifica immediata sul TUO cellulare
-            MIO_ID_TELEGRAM = "2107082705" # <-- RIMETTI IL TUO NUMERO ID QUI!
-            try:
-                bot.send_message(MIO_ID_TELEGRAM, messaggio_admin)
-            except Exception as e:
-                print("Errore notifica admin:", e)
-            # 🚨 FINE MAGIA NOTIFICHE 🚨
-            bot.edit_message_text(f"✅ *CONFERMATA!*\n🗓 {data_scelta} alle {ora_inizio} con {nome_istr}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            # Messaggio di conferma all'allievo
+            bot.edit_message_text(f"✅ **CONFERMATA!**\n📅 {data}\n⏰ {ora} - {ora_fine}\n👤 {istr}", 
+                                  chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
         else:
-            bot.edit_message_text("❌ Crediti insufficienti.", chat_id=call.message.chat.id, message_id=call.message.message_id)
+            bot.send_message(call.message.chat.id, "❌ Crediti insufficienti.")
+            
         cur.close()
         conn.close()
-    except Exception as e: print(e)
+    except Exception as e:
+        print(f"Errore conferma: {e}")
 
-# ==========================================
-# TRUCCO PER RENDER (Server Web)
-# ==========================================
+# --- 5. SHOP ---
+@bot.callback_query_handler(func=lambda call: call.data.startswith('shop|'))
+def apri_negozio(call):
+    id_allievo = call.data.split('|')[1]
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("📦 Pacchetto 3 Ore (9 Guide) - 63€", callback_data=f"buy|{id_allievo}|9|63"))
+    bot.edit_message_text("🛒 **Negozio Guide**:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('buy|'))
+def genera_fattura(call):
+    dati = call.data.split('|')
+    prezzi = [LabeledPrice(label="Ricarica Guide", amount=int(dati[3]) * 100)]
+    bot.send_invoice(call.message.chat.id, "Ricarica Guide", "Crediti per prenotazioni", f"PAG|{dati[1]}|{dati[2]}", STRIPE_PROVIDER_TOKEN, "EUR", prezzi)
+
+@bot.message_handler(content_types=['successful_payment'])
+def pagamento_successo(message):
+    dati = message.successful_payment.invoice_payload.split('|')
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE allievi SET crediti = crediti + %s WHERE id = %s", (int(dati[2]), dati[1]))
+    conn.commit()
+    bot.reply_to(message, "🎉 Pagamento ricevuto! Crediti aggiornati.")
+
+# --- SERVER WEB E POLLING ---
 app = Flask(__name__)
 @app.route('/')
-def home(): return "✅ Bot ACCESO!"
-def run_web(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+def home(): return "✅ Bot Online"
+
 if __name__ == "__main__":
-    threading.Thread(target=run_web).start()
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))).start()
     bot.infinity_polling()
 
 
