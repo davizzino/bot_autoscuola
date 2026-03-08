@@ -175,35 +175,49 @@ def scegli_giorno(call):
     dati = call.data.split('|')
     markup = InlineKeyboardMarkup()
     oggi = datetime.now()
-    for i in range(1, 8):
+    row = []
+    # Mostriamo i prossimi 9 giorni (escludendo la domenica)
+    giorni_aggiunti, i = 0, 1
+    while giorni_aggiunti < 9:
         g = oggi + timedelta(days=i)
         if g.weekday() != 6:
-            markup.add(InlineKeyboardButton(g.strftime('%d/%m (%a)'), callback_data=f"ora|{dati[1]}|{dati[2]}|{g.strftime('%d/%m/%Y')}"))
-    bot.edit_message_text("Scegli il giorno:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+            testo = f"📅 {g.strftime('%d/%m')}"
+            row.append(InlineKeyboardButton(testo, callback_data=f"ora|{dati[1]}|{dati[2]}|{g.strftime('%d/%m/%Y')}"))
+            if len(row) == 3:
+                markup.row(*row)
+                row = []
+            giorni_aggiunti += 1
+        i += 1
+    if row: markup.row(*row)
+    bot.edit_message_text("🗓️ Scegli il giorno:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ora|'))
 def scegli_orario(call):
     dati = call.data.split('|')
     markup = InlineKeyboardMarkup()
+    row = []
     for h in range(8, 20):
-        markup.add(InlineKeyboardButton(f"{h}:00", callback_data=f"dur|{dati[1]}|{dati[2]}|{dati[3]}|{h:02d}:00"))
-    bot.edit_message_text("A che ora?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+        row.append(InlineKeyboardButton(f"🕒 {h:02d}:00", callback_data=f"dur|{dati[1]}|{dati[2]}|{dati[3]}|{h:02d}:00"))
+        if len(row) == 3:
+            markup.row(*row)
+            row = []
+    if row: markup.row(*row)
+    bot.edit_message_text("🕒 A che ora?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('dur|'))
 def scegli_durata(call):
     dati = call.data.split('|')
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("⏱️ 20 min", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|1"))
-    markup.add(InlineKeyboardButton("⏱️ 40 min", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|2"))
-    markup.add(InlineKeyboardButton("⏱️ 1 Ora", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|3"))
-    bot.edit_message_text("Durata della guida?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    markup.add(InlineKeyboardButton("⏱️ 20 min (1 G.)", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|1"))
+    markup.add(InlineKeyboardButton("⏱️ 40 min (2 G.)", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|2"))
+    markup.add(InlineKeyboardButton("⏱️ 1 Ora (3 G.)", callback_data=f"conf|{dati[1]}|{dati[2]}|{dati[3]}|{dati[4]}|3"))
+    bot.edit_message_text("⏳ Quanto vuoi guidare?", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('conf|'))
 def conferma_prenotazione(call):
     dati = call.data.split('|')
     id_a, istr, data, ora, scatti = dati[1], dati[2], dati[3], dati[4], int(dati[5])
     
-    # Calcolo orario di fine
     h, m = map(int, ora.split(':'))
     minuti = m + (scatti * 20)
     ora_fine = f"{(h + minuti // 60):02d}:{(minuti % 60):02d}"
@@ -215,19 +229,27 @@ def conferma_prenotazione(call):
         allievo = cur.fetchone()
         
         if allievo and allievo[1] >= scatti:
-            # Registrazione della guida
             cur.execute("""
                 INSERT INTO guide (allievo, istruttore, veicolo, data, ora, ora_fine, stato_pagamento, scatti) 
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (allievo[0], istr, "Da Assegnare", data, ora, ora_fine, f"Scalato ({scatti})", scatti))
             
-            # Scalaggio crediti
             cur.execute("UPDATE allievi SET crediti = crediti - %s WHERE id=%s", (scatti, id_a))
             conn.commit()
             
-            # Messaggio di conferma all'allievo
+            # Messaggio all'allievo
             bot.edit_message_text(f"✅ **CONFERMATA!**\n📅 {data}\n⏰ {ora} - {ora_fine}\n👤 {istr}", 
                                   chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown")
+            
+            # ==========================================
+            # NOTIFICA ALLA SEGRETERIA (RIPRISTINATA)
+            # ==========================================
+            try:
+                # Assicurati che ADMIN_ID sia scritto correttamente in alto nel file!
+                bot.send_message(ADMIN_ID, f"🟢 **NUOVA PRENOTAZIONE**\n👤 Allievo: {allievo[0]}\n📅 {data} ({ora} - {ora_fine})\n👨‍🏫 Istr: {istr}", parse_mode="Markdown")
+            except Exception as e:
+                print(f"Errore invio notifica admin: {e}")
+                
         else:
             bot.send_message(call.message.chat.id, "❌ Crediti insufficienti.")
             
@@ -267,6 +289,7 @@ def home(): return "✅ Bot Online"
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))).start()
     bot.infinity_polling()
+
 
 
 
