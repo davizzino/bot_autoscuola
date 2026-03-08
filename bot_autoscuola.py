@@ -12,7 +12,7 @@ TELEGRAM_TOKEN = "8700195342:AAGlUqka3ImYc9G5DYnCRfixisLWuguDxjk"
 STRIPE_PROVIDER_TOKEN = "2051251535:TEST:OTk5MDA4ODgxLTAwNQ"
 DB_URL = "postgresql://postgres.xxbjfhpbrcbryfcjuxsx:Napoli2026+++@aws-1-eu-west-1.pooler.supabase.com:6543/postgres"
 # Inserisci il tuo ID numerico per ricevere le notifiche sul PC
-ADMIN_ID = "IL_TUO_ID_TELEGRAM" 
+ADMIN_ID = "2107082705" 
 # ==========================================
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -289,6 +289,7 @@ def home(): return "✅ Bot Online"
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))).start()
     bot.infinity_polling()
+
 
 
 
